@@ -38,11 +38,11 @@ const DEMO_JOIN_DATES = {
 };
 const TAB_META = [
   { id: "dashboard", label: "대시보드", hint: "잔액과 우선 처리" },
-  { id: "members", label: "회원", hint: "회비 대상 관리" },
   { id: "dues", label: "회비", hint: "회비 생성과 납부 현황" },
   { id: "deposits", label: "입금", hint: "입금 등록과 대조" },
   { id: "expenses", label: "지출", hint: "지출 기록과 증빙" },
   { id: "settings", label: "설정", hint: "기초잔액과 카테고리" },
+  { id: "members", label: "회원", hint: "회비 대상 관리" },
 ];
 const EXTRA_TAB_META = [
   { id: "submeetings", label: "소모임", hint: "임시모임 정산과 반영" },
@@ -1146,7 +1146,7 @@ function migrateLegacySingleGroupState() {
 }
 
 function syncSelectedDue() {
-  const duesInPeriod = getDuesForPeriod(state.ui.selectedPeriod);
+  const duesInPeriod = getDuesForPeriod(getDueReferencePeriod());
   if (!duesInPeriod.length) {
     state.ui.selectedDueId = "";
     return;
@@ -1155,6 +1155,10 @@ function syncSelectedDue() {
   if (!hasSelection) {
     state.ui.selectedDueId = duesInPeriod[0].id;
   }
+}
+
+function getDueReferencePeriod(tabId = state.ui.currentTab) {
+  return tabId === "dues" ? currentPeriod() : state.ui.selectedPeriod || currentPeriod();
 }
 
 function syncSelectedTempMeeting() {
@@ -1180,6 +1184,8 @@ function renderApp() {
   const periodPicker = document.getElementById("period-picker");
   const root = document.getElementById("screen-root");
   const currentGroup = getCurrentGroup();
+  const isDueTab = state.ui.currentTab === "dues";
+  const pickerPeriod = isDueTab ? getDueReferencePeriod() : state.ui.selectedPeriod;
 
   pageTitle.textContent = currentGroup ? `${currentGroup.name} · ${pageMeta.label}` : pageMeta.label;
   groupPicker.innerHTML = state.groups
@@ -1191,7 +1197,9 @@ function renderApp() {
       `,
     )
     .join("");
-  periodPicker.innerHTML = renderPeriodOptions(state.ui.selectedPeriod);
+  periodPicker.innerHTML = renderPeriodOptions(pickerPeriod);
+  periodPicker.disabled = isDueTab;
+  periodPicker.title = isDueTab ? "회비 탭은 현재 월 기준으로 고정됩니다." : "";
   root.innerHTML = `${renderFlash()}${renderCurrentTab()}`;
   renderSyncIndicator();
 }
@@ -1798,7 +1806,8 @@ function renderMembers() {
 }
 
 function renderDues() {
-  const dues = getDuesForPeriod(state.ui.selectedPeriod);
+  const duePeriod = getDueReferencePeriod();
+  const dues = getDuesForPeriod(duePeriod);
   const editingDue = getDue(state.ui.editing.dueId);
   const selectedDue = getDue(state.ui.selectedDueId);
   const assignments = filterAssignmentsForSelectedDue(selectedDue?.id);
@@ -1813,15 +1822,15 @@ function renderDues() {
         <article class="list-panel">
           <div class="section-title">
             <div>
-              <h3>${monthLabel(state.ui.selectedPeriod)} 회비 항목</h3>
-              <p>현재 월 기준 회비와 행사비를 관리합니다.</p>
+              <h3>${monthLabel(duePeriod)} 회비 항목</h3>
+              <p>회비 탭은 항상 현재 월 기준으로 보여줍니다.</p>
             </div>
             <button class="secondary-button" type="button" data-action="new-due">새 회비</button>
           </div>
           ${
             dues.length
               ? `<div class="dues-card-list">${dues.map(renderDueCard).join("")}</div>`
-              : `<div class="empty-state">선택한 월에 등록된 회비 항목이 없습니다.</div>`
+              : `<div class="empty-state">현재 월에 등록된 회비 항목이 없습니다.</div>`
           }
         </article>
 
@@ -1874,7 +1883,7 @@ function renderDues() {
         <div class="section-title">
           <div>
             <h3>${editingDue ? "회비 수정" : "회비 생성"}</h3>
-            <p>${editingDue ? "기존 회비는 금액, 마감일, 설명 위주로 수정합니다." : `${monthLabel(state.ui.selectedPeriod)} 기준으로 회비 항목을 만듭니다.`}</p>
+            <p>${editingDue ? "기존 회비는 금액, 마감일, 설명 위주로 수정합니다." : `${monthLabel(duePeriod)} 기준으로 회비 항목을 만듭니다.`}</p>
           </div>
         </div>
         <form id="due-form">
@@ -1903,7 +1912,7 @@ function renderDues() {
             </label>
             <label class="field-stack">
               <span>마감일</span>
-              <input name="dueDate" type="date" value="${editingDue?.dueDate || dateInPeriod(state.ui.selectedPeriod, 20)}" required />
+              <input name="dueDate" type="date" value="${editingDue?.dueDate || dateInPeriod(duePeriod, 20)}" required />
             </label>
             <label class="field-stack">
               <span>대상 방식</span>
@@ -1945,7 +1954,7 @@ function renderDues() {
           ${
             editingDue
               ? ""
-              : `<p class="helper-text" style="margin-top:12px;">현재 선택된 ${monthLabel(state.ui.selectedPeriod)}에 바로 생성됩니다.</p>`
+              : `<p class="helper-text" style="margin-top:12px;">현재 월 ${monthLabel(duePeriod)}에 바로 생성됩니다.</p>`
           }
           <label class="field-stack" style="margin-top:14px;">
             <span>설명</span>
@@ -3949,7 +3958,7 @@ function submitDue(form) {
     return;
   }
 
-  const period = state.ui.selectedPeriod;
+  const period = getDueReferencePeriod();
   const targetMode = String(formData.get("targetMode") || "all");
   const targetMemberIds =
     targetMode === "all"
@@ -5411,7 +5420,7 @@ function mergeLedgerRows(period) {
 }
 
 function getSelectedYear() {
-  return String(state.ui.selectedPeriod || currentPeriod()).slice(0, 4);
+  return String(state.ui.currentTab === "dues" ? getDueReferencePeriod() : state.ui.selectedPeriod || currentPeriod()).slice(0, 4);
 }
 
 function getAvailablePeriods(selectedPeriod) {
