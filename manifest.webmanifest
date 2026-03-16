@@ -1,0 +1,19 @@
+{
+  "name": "모임 총무 보드",
+  "short_name": "총무보드",
+  "description": "회비, 입금, 지출, 월 마감을 총무 관점으로 관리하는 웹앱",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5efe4",
+  "theme_color": "#f5efe4",
+  "icons": [
+    {
+      "src": "./app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

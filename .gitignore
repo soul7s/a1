@@ -1,0 +1,7 @@
+__pycache__/
+.DS_Store
+data/board-state.json
+mobile-*.png
+topbar-*.png
+treasurer-board*.png
+settings-group-kind.png

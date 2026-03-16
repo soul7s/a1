@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5efe4" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="모임 총무 보드" />
+    <title>모임 총무 보드</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./app-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./app-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <button class="brand-block" type="button" data-action="go-home">
+          <p class="eyebrow">Treasurer-only MVP</p>
+          <h1>모임 총무 보드</h1>
+          <p class="brand-copy">
+            회비, 입금, 지출, 월 마감을 총무 실무 기준으로 바로 처리하는 데모입니다.
+          </p>
+        </button>
+
+        <nav id="tab-nav" class="tab-nav" aria-label="주요 화면"></nav>
+
+        <section class="sidebar-card">
+          <h2>이번 데모 범위</h2>
+          <ul>
+            <li>기초잔액과 이월금 계산</li>
+            <li>회비별 납부 현황과 입금 처리</li>
+            <li>지출 등록과 영수증 파일명 보관</li>
+            <li>월 마감, 재오픈, 변경 이력</li>
+          </ul>
+        </section>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div class="topbar-intro">
+            <p class="eyebrow">총무 운영 화면</p>
+            <h2 id="page-title">대시보드</h2>
+            <p class="topbar-copy">현재 모임과 기준 월을 선택한 뒤 회비, 입금, 지출, 마감을 같은 흐름으로 관리합니다.</p>
+            <p id="sync-indicator" class="sync-indicator is-local">이 기기 저장</p>
+          </div>
+
+          <div class="topbar-actions">
+            <label class="month-picker topbar-field">
+              <span>모임</span>
+              <select id="group-picker"></select>
+            </label>
+            <label class="month-picker topbar-field">
+              <span>기준 월</span>
+              <select id="period-picker"></select>
+            </label>
+          </div>
+        </header>
+
+        <nav id="mobile-tab-nav" class="mobile-tab-nav" aria-label="모바일 화면 이동"></nav>
+
+        <main id="screen-root" class="screen-root"></main>
+      </div>
+    </div>
+
+    <script type="module" src="./pwa.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
