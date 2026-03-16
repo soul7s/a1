@@ -1293,6 +1293,7 @@ function renderDashboard() {
         <p>${currentGroup?.name || "현재 모임"} 기준으로 입금, 이자, 지출, 월 마감만 빠르게 처리하면 됩니다.</p>
         <div class="quick-strip" style="margin-top:16px;">
           <button class="primary-button" type="button" data-action="select-tab" data-tab="deposits">입금</button>
+          <button class="secondary-button" type="button" data-action="new-income">이자 등록</button>
           <button class="secondary-button" type="button" data-action="select-tab" data-tab="expenses">지출</button>
           <button class="ghost-button" type="button" data-action="select-tab" data-tab="closing">마감</button>
           ${isInstantGroup ? "" : `<button class="ghost-button" type="button" data-action="select-tab" data-tab="submeetings">소모임</button>`}
@@ -1873,7 +1874,7 @@ function renderDues() {
         <div class="section-title">
           <div>
             <h3>${editingDue ? "회비 수정" : "회비 생성"}</h3>
-            <p>${editingDue ? "기존 회비는 금액, 마감일, 설명 위주로 수정합니다." : "새로운 회비 항목을 만듭니다."}</p>
+            <p>${editingDue ? "기존 회비는 금액, 마감일, 설명 위주로 수정합니다." : `${monthLabel(state.ui.selectedPeriod)} 기준으로 회비 항목을 만듭니다.`}</p>
           </div>
         </div>
         <form id="due-form">
@@ -1899,14 +1900,6 @@ function renderDues() {
             <label class="field-stack">
               <span>금액</span>
               <input name="amount" type="number" min="1" required value="${editingDue ? editingDue.amount : ""}" />
-            </label>
-            <label class="field-stack">
-              <span>대상 월</span>
-              ${
-                editingDue
-                  ? `<input value="${editingDue.period}" disabled />`
-                  : `<input name="period" type="month" value="${state.ui.selectedPeriod}" required />`
-              }
             </label>
             <label class="field-stack">
               <span>마감일</span>
@@ -1948,6 +1941,11 @@ function renderDues() {
                   </select>
                 </label>
               `
+          }
+          ${
+            editingDue
+              ? ""
+              : `<p class="helper-text" style="margin-top:12px;">현재 선택된 ${monthLabel(state.ui.selectedPeriod)}에 바로 생성됩니다.</p>`
           }
           <label class="field-stack" style="margin-top:14px;">
             <span>설명</span>
@@ -3641,6 +3639,13 @@ function handleClick(event) {
     case "edit-income":
       editIncomeEntry(trigger.dataset.id);
       return;
+    case "new-income":
+      state.ui.currentTab = "dashboard";
+      state.ui.editing.incomeId = "";
+      renderApp();
+      scrollPageTop();
+      document.getElementById("income-form")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      return;
     case "clear-income-form":
       state.ui.editing.incomeId = "";
       renderApp();
@@ -3944,7 +3949,7 @@ function submitDue(form) {
     return;
   }
 
-  const period = String(formData.get("period") || state.ui.selectedPeriod);
+  const period = state.ui.selectedPeriod;
   const targetMode = String(formData.get("targetMode") || "all");
   const targetMemberIds =
     targetMode === "all"
