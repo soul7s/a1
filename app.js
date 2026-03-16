@@ -1287,10 +1287,8 @@ function renderDashboard() {
   const closing = getClosingRecord(state.ui.selectedPeriod);
   const recentDeposits = sortDateDesc(getDepositsForPeriod(state.ui.selectedPeriod)).slice(0, 4);
   const recentExpenses = sortDateDesc(getExpensesForPeriod(state.ui.selectedPeriod)).slice(0, 4);
-  const recentIncomeEntries = sortDateDesc(getIncomeEntriesForPeriod(state.ui.selectedPeriod)).slice(0, 4);
   const duesSummary = getAllDueCounts(state.ui.selectedPeriod);
   const currentGroup = getCurrentGroup();
-  const editingIncome = getIncomeEntries().find((entry) => entry.id === state.ui.editing.incomeId) || null;
   const isInstantGroup = currentGroup?.kind === "인스턴트모임";
 
   return `
@@ -1298,67 +1296,31 @@ function renderDashboard() {
       <article class="hero-card accent">
         <p class="eyebrow">Current month</p>
         <h3>${monthLabel(state.ui.selectedPeriod)} ${isInstantGroup ? "1회성 모임 정산" : "총무 운영 요약"}</h3>
-        <p>${currentGroup?.name || "현재 모임"} 기준으로 입금, 이자, 지출, 월 마감만 빠르게 처리하면 됩니다.</p>
+        <p>${currentGroup?.name || "현재 모임"}의 핵심 상태만 빠르게 확인합니다.</p>
         <div class="quick-strip" style="margin-top:16px;">
           <button class="primary-button" type="button" data-action="select-tab" data-tab="deposits">입금</button>
-          <button class="secondary-button" type="button" data-action="new-income">이자 등록</button>
           <button class="secondary-button" type="button" data-action="select-tab" data-tab="expenses">지출</button>
           <button class="ghost-button" type="button" data-action="select-tab" data-tab="closing">마감</button>
           ${isInstantGroup ? "" : `<button class="ghost-button" type="button" data-action="select-tab" data-tab="submeetings">소모임</button>`}
         </div>
         <div class="summary-strip" style="margin-top:16px;">
-          <span class="status-badge status-paid">회비 입금 ${formatCurrency(snapshot.depositIncome)}</span>
-          <span class="status-badge status-active">이자 ${formatCurrency(snapshot.interestIncome)}</span>
-          <span class="status-badge status-exempt">지출 ${formatCurrency(snapshot.expense)}</span>
           <span class="status-badge ${closing ? "status-closed" : "status-review"}">${closing ? "마감 완료" : "진행 중"}</span>
+          <span class="status-badge status-review">확인 필요 ${snapshot.reviewCount}건</span>
+          <span class="status-badge status-unpaid">미납/부분 ${snapshot.unpaidCount}건</span>
+          <span class="status-badge status-paid">최근 수입 ${formatCurrency(snapshot.income)}</span>
         </div>
       </article>
       <article class="hero-card">
         <p class="eyebrow">Status</p>
-        <h3>현재 잔액 ${formatCurrency(snapshot.closingBalance)}</h3>
+        <h3>${closing ? "이번 달은 마감되었습니다." : "이번 달은 진행 중입니다."}</h3>
         <div class="kpi-list">
-          ${renderKpiRow("기초잔액", formatCurrency(snapshot.openingBalance))}
+          ${renderKpiRow("현재 잔액", formatCurrency(snapshot.closingBalance))}
           ${renderKpiRow("회비 입금", formatCurrency(snapshot.depositIncome))}
           ${renderKpiRow("이자 수입", formatCurrency(snapshot.interestIncome))}
           ${renderKpiRow("지출", formatCurrency(snapshot.expense))}
-          ${renderKpiRow("미납/부분", `${snapshot.unpaidCount}명`)}
-          ${renderKpiRow("확인 필요 입금", `${snapshot.reviewCount}건`)}
+          ${renderKpiRow("납부 완료", `${duesSummary.paidCount}명`)}
+          ${renderKpiRow("확인 필요", `${snapshot.reviewCount}건`)}
         </div>
-      </article>
-    </section>
-
-    <section class="metric-grid">
-      <article class="metric-card success">
-        <span>기초잔액</span>
-        <strong>${formatCurrency(snapshot.openingBalance)}</strong>
-      </article>
-      <article class="metric-card ${snapshot.closingBalance < 0 ? "negative" : ""}">
-        <span>현재 잔액</span>
-        <strong>${formatCurrency(snapshot.closingBalance)}</strong>
-      </article>
-      <article class="metric-card">
-        <span>회비 입금</span>
-        <strong>${formatCurrency(snapshot.depositIncome)}</strong>
-      </article>
-      <article class="metric-card">
-        <span>이자 수입</span>
-        <strong>${formatCurrency(snapshot.interestIncome)}</strong>
-      </article>
-      <article class="metric-card">
-        <span>지출</span>
-        <strong>${formatCurrency(snapshot.expense)}</strong>
-      </article>
-      <article class="metric-card alert">
-        <span>미납/부분 납부</span>
-        <strong>${snapshot.unpaidCount}명</strong>
-      </article>
-      <article class="metric-card alert">
-        <span>확인 필요 입금</span>
-        <strong>${snapshot.reviewCount}건</strong>
-      </article>
-      <article class="metric-card">
-        <span>마감 상태</span>
-        <strong>${closing ? "마감 완료" : "진행 중"}</strong>
       </article>
     </section>
 
@@ -1392,47 +1354,6 @@ function renderDashboard() {
       </div>
 
       <div class="stack">
-        <article class="form-panel">
-          <div class="section-title">
-            <div>
-              <h3>${editingIncome ? "이자 수정" : "이자 등록"}</h3>
-              <p>통장 이자는 회비와 별도로 기록해 잔액에 반영합니다.</p>
-            </div>
-          </div>
-          <form id="income-form">
-            <input type="hidden" name="editingId" value="${editingIncome?.id || ""}" />
-            <input type="hidden" name="type" value="이자" />
-            <div class="form-grid">
-              <label class="field-stack">
-                <span>이자일</span>
-                <input name="date" type="date" required value="${editingIncome?.date || today()}" />
-              </label>
-              <label class="field-stack">
-                <span>이자 금액</span>
-                <input name="amount" type="number" min="1" required value="${editingIncome?.amount || ""}" />
-              </label>
-            </div>
-            <label class="field-stack" style="margin-top:14px;">
-              <span>메모</span>
-              <input name="note" value="${escapeHtml(editingIncome?.note || "")}" placeholder="예: 3월 통장 이자" />
-            </label>
-            <div class="form-actions">
-              <button class="primary-button" type="submit">${editingIncome ? "이자 수정" : "이자 저장"}</button>
-              <button class="ghost-button" type="button" data-action="clear-income-form">비우기</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="data-table">
-          <div class="section-title">
-            <div>
-              <h3>이달 이자 내역</h3>
-              <p>${monthLabel(state.ui.selectedPeriod)} 기준으로만 보여줍니다.</p>
-            </div>
-          </div>
-          ${renderIncomeEntryTable(recentIncomeEntries, true)}
-        </article>
-
         <article class="card">
           <div class="section-title">
             <div>
@@ -1972,8 +1893,10 @@ function renderDues() {
 
 function renderDeposits() {
   const editingDeposit = getDeposit(state.ui.editing.depositId);
+  const editingIncome = getIncomeEntries().find((entry) => entry.id === state.ui.editing.incomeId) || null;
   const draft = editingDeposit || state.ui.depositDraft;
   const deposits = sortDateDesc(getDepositsForPeriod(state.ui.selectedPeriod));
+  const incomeEntries = sortDateDesc(getIncomeEntriesForPeriod(state.ui.selectedPeriod));
   const selectedMember = getMember(draft.memberId);
   const dueOptions = getDepositDueOptions(draft.memberId);
   const selectedDue = getDue(draft.dueId);
@@ -1995,6 +1918,7 @@ function renderDeposits() {
           </div>
           <div class="badge-row">
             <span class="status-badge status-paid">회비 입금 ${formatCurrency(currentSnapshot.depositIncome)}</span>
+            <span class="status-badge status-active">이자 ${formatCurrency(currentSnapshot.interestIncome)}</span>
             <span class="status-badge status-review">확인 필요 ${currentSnapshot.reviewCount}건</span>
             <span class="soft-tag">총 ${deposits.length}건</span>
           </div>
@@ -2107,6 +2031,48 @@ function renderDeposits() {
           <button class="secondary-button" type="button" data-action="new-deposit">새로 입력</button>
         </div>
         ${renderDepositTable(deposits, true)}
+      </article>
+
+      <article class="form-panel">
+        <div class="section-title">
+          <div>
+            <h3>${editingIncome ? "이자 수정" : "이자 등록"}</h3>
+            <p>통장 이자처럼 회비 외 수입은 여기서 같이 기록합니다.</p>
+          </div>
+        </div>
+        <form id="income-form">
+          <input type="hidden" name="editingId" value="${editingIncome?.id || ""}" />
+          <input type="hidden" name="type" value="이자" />
+          <div class="form-grid">
+            <label class="field-stack">
+              <span>이자일</span>
+              <input name="date" type="date" required value="${editingIncome?.date || today()}" />
+            </label>
+            <label class="field-stack">
+              <span>이자 금액</span>
+              <input name="amount" type="number" min="1" required value="${editingIncome?.amount || ""}" />
+            </label>
+          </div>
+          <label class="field-stack" style="margin-top:14px;">
+            <span>메모</span>
+            <input name="note" value="${escapeHtml(editingIncome?.note || "")}" placeholder="예: 3월 통장 이자" />
+          </label>
+          <div class="form-actions">
+            <button class="primary-button" type="submit">${editingIncome ? "수정 저장" : "이자 저장"}</button>
+            <button class="ghost-button" type="button" data-action="clear-income-form">비우기</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="data-table">
+        <div class="section-title">
+          <div>
+            <h3>${monthLabel(state.ui.selectedPeriod)} 이자 내역</h3>
+            <p>선택한 월의 이자 수입만 보여줍니다.</p>
+          </div>
+          <button class="secondary-button" type="button" data-action="new-income">새로 입력</button>
+        </div>
+        ${renderIncomeEntryTable(incomeEntries, true)}
       </article>
     </section>
   `;
@@ -3649,7 +3615,7 @@ function handleClick(event) {
       editIncomeEntry(trigger.dataset.id);
       return;
     case "new-income":
-      state.ui.currentTab = "dashboard";
+      state.ui.currentTab = "deposits";
       state.ui.editing.incomeId = "";
       renderApp();
       scrollPageTop();
@@ -4710,7 +4676,7 @@ function editIncomeEntry(id) {
   if (!entry) {
     return flash("수정할 이자 수입을 찾지 못했습니다.", "danger");
   }
-  state.ui.currentTab = "dashboard";
+  state.ui.currentTab = "deposits";
   state.ui.selectedPeriod = periodOf(entry.date);
   state.ui.editing.incomeId = id;
   renderApp();
@@ -5182,7 +5148,7 @@ function recalculateAssignment(targetState, assignment) {
     return;
   }
 
-  assignment.status = suggestStatus(assignment.paidAmount, due.amount);
+  assignment.status = inferAssignmentStatusFromDeposits(deposits, due.amount);
 }
 
 function suggestStatus(paidAmount, dueAmount) {
@@ -5196,6 +5162,27 @@ function suggestStatus(paidAmount, dueAmount) {
     return "부분 납부";
   }
   return "확인 필요";
+}
+
+function inferAssignmentStatusFromDeposits(deposits, dueAmount) {
+  if (!deposits.length) {
+    return suggestStatus(0, dueAmount);
+  }
+
+  if (deposits.some((deposit) => deposit.status === "확인 필요")) {
+    return "확인 필요";
+  }
+
+  if (deposits.some((deposit) => deposit.status === "납부 완료")) {
+    return "납부 완료";
+  }
+
+  if (deposits.some((deposit) => deposit.status === "부분 납부")) {
+    return "부분 납부";
+  }
+
+  const paidAmount = deposits.reduce((sum, deposit) => sum + asNumber(deposit.amount), 0);
+  return suggestStatus(paidAmount, dueAmount);
 }
 
 function resolveDepositStatus(record, chosenStatus) {
