@@ -109,6 +109,20 @@ function saveState(options = {}) {
   }
 }
 
+function createDepositDraft(overrides = {}) {
+  const hasDueOverride = Object.prototype.hasOwnProperty.call(overrides, "dueId");
+  const hasStatusOverride = Object.prototype.hasOwnProperty.call(overrides, "status");
+  const memberId = Object.prototype.hasOwnProperty.call(overrides, "memberId") ? overrides.memberId : "";
+  const dueId = hasDueOverride ? overrides.dueId : state?.ui?.selectedDueId || "";
+  const status = hasStatusOverride ? overrides.status : "납부 완료";
+
+  return {
+    memberId: memberId || "",
+    dueId: dueId || "",
+    status: status || "납부 완료",
+  };
+}
+
 async function initializeRemoteSync() {
   renderSyncIndicator();
 
@@ -550,11 +564,9 @@ function createSeedState() {
         depositId: "",
         expenseId: "",
       },
-      depositDraft: {
-        memberId: "",
+      depositDraft: createDepositDraft({
         dueId: readingBundle.dues[0]?.id || "",
-        status: "자동",
-      },
+      }),
       flash: {
         type: "info",
         message: "샘플 데이터가 준비되었습니다. 총무 실무 흐름을 바로 테스트할 수 있습니다.",
@@ -810,9 +822,7 @@ function hydrateState() {
     ...(state.ui.editing || {}),
   };
   state.ui.depositDraft = {
-    memberId: "",
-    dueId: "",
-    status: "자동",
+    ...createDepositDraft(),
     ...(state.ui.depositDraft || {}),
   };
   state.ui.flash = state.ui.flash || null;
@@ -1714,15 +1724,35 @@ function renderDeposits() {
   const editingDeposit = getDeposit(state.ui.editing.depositId);
   const draft = editingDeposit || state.ui.depositDraft;
   const deposits = filterDeposits(filters);
+  const selectedMember = getMember(draft.memberId);
+  const dueOptions = getDepositDueOptions(draft.memberId);
+  const selectedDue = getDue(draft.dueId);
+  const suggestedAmount = editingDeposit ? editingDeposit.amount : selectedDue?.amount || "";
+  const suggestedPayerName = editingDeposit?.payerName || selectedMember?.payerName || selectedMember?.name || "";
+  const currentSnapshot = getPeriodSnapshot(state.ui.selectedPeriod);
 
   return `
     <section class="section-grid">
       <div class="stack">
+        <article class="card">
+          <div class="section-title">
+            <div>
+              <h3>${monthLabel(state.ui.selectedPeriod)} 입금 현황</h3>
+              <p>현황 월은 목록 조회용입니다. 입금을 저장하면 해당 입금 월로 자동 이동합니다.</p>
+            </div>
+            <div class="badge-row">
+              <span class="status-badge status-paid">확정 수입 ${formatCurrency(currentSnapshot.income)}</span>
+              <span class="status-badge status-review">확인 필요 ${currentSnapshot.reviewCount}건</span>
+              <span class="status-badge status-unpaid">미납/부분 ${currentSnapshot.unpaidCount}건</span>
+            </div>
+          </div>
+        </article>
+
         <article class="data-table">
           <div class="section-title">
             <div>
               <h3>${monthLabel(state.ui.selectedPeriod)} 입금 내역</h3>
-              <p>미지정 입금도 임시로 저장한 뒤 나중에 대조할 수 있습니다.</p>
+              <p>빠르게 입력하고, 현황은 아래 목록에서 확인합니다.</p>
             </div>
             <div class="inline-actions">
               <button class="secondary-button" type="button" data-action="new-deposit">새 입금</button>
@@ -1752,7 +1782,7 @@ function renderDeposits() {
         <div class="section-title">
           <div>
             <h3>${editingDeposit ? "입금 수정" : "입금 등록"}</h3>
-            <p>대조되지 않은 입금은 회원/회비 없이 확인 필요 상태로 저장할 수 있습니다.</p>
+            <p>회원과 회비를 고르면 입금자명과 금액이 자동으로 채워집니다.</p>
           </div>
         </div>
         <form id="deposit-form">
@@ -1778,18 +1808,17 @@ function renderDeposits() {
               <span>회비 항목</span>
               <select name="dueId">
                 <option value="">미지정</option>
-                ${getDues()
-                  .slice()
-                  .sort((left, right) => right.period.localeCompare(left.period))
+                ${dueOptions
                   .map(
                     (due) => `
                       <option value="${due.id}" ${draft.dueId === due.id ? "selected" : ""}>
-                        ${escapeHtml(due.title)} · ${formatCurrency(due.amount)}
+                        ${escapeHtml(`${due.period} · ${due.title}`)} · ${formatCurrency(due.amount)}
                       </option>
                     `,
                   )
                   .join("")}
               </select>
+              <span class="helper-text">회비를 선택하면 정해진 금액이 바로 들어갑니다.</span>
             </label>
             <label class="field-stack">
               <span>입금일</span>
@@ -1797,25 +1826,25 @@ function renderDeposits() {
             </label>
             <label class="field-stack">
               <span>입금 금액</span>
-              <input name="amount" type="number" min="1" required value="${editingDeposit ? editingDeposit.amount : ""}" />
+              <input name="amount" type="number" min="1" required value="${suggestedAmount}" />
             </label>
             <label class="field-stack">
               <span>입금자명</span>
-              <input name="payerName" value="${escapeHtml(editingDeposit?.payerName || "")}" />
+              <input name="payerName" value="${escapeHtml(suggestedPayerName)}" />
             </label>
             <label class="field-stack">
               <span>상태</span>
               <select name="statusChoice">
                 ${renderOptions(
                   [
-                    { value: "자동", label: "자동 판단" },
                     { value: "납부 완료", label: "납부 완료" },
                     { value: "부분 납부", label: "부분 납부" },
                     { value: "확인 필요", label: "확인 필요" },
                   ],
-                  draft.status || "자동",
+                  draft.status || "납부 완료",
                 )}
               </select>
+              <span class="helper-text">입금 확인이 끝난 건은 납부 완료, 미확정 건만 확인 필요로 두면 됩니다.</span>
             </label>
           </div>
           <label class="field-stack" style="margin-top:14px;">
@@ -2826,7 +2855,7 @@ function renderAssignmentTable(assignments, due) {
                     <select data-assignment-status="${assignment.id}">
                       ${renderOptions(
                         [
-                          { value: "자동", label: "자동" },
+                          { value: "자동", label: "입금 기준" },
                           { value: "미납", label: "미납" },
                           { value: "납부 완료", label: "납부 완료" },
                           { value: "부분 납부", label: "부분 납부" },
@@ -3301,17 +3330,16 @@ function handleClick(event) {
     case "new-deposit":
       state.ui.currentTab = "deposits";
       state.ui.editing.depositId = "";
-      state.ui.depositDraft = { memberId: "", dueId: state.ui.selectedDueId || "", status: "자동" };
+      state.ui.depositDraft = createDepositDraft({ dueId: state.ui.selectedDueId || "" });
       renderApp();
       return;
     case "prepare-deposit":
       state.ui.currentTab = "deposits";
       state.ui.editing.depositId = "";
-      state.ui.depositDraft = {
+      state.ui.depositDraft = createDepositDraft({
         memberId: trigger.dataset.memberId || "",
         dueId: trigger.dataset.dueId || "",
-        status: "자동",
-      };
+      });
       renderApp();
       return;
     case "edit-deposit":
@@ -3319,7 +3347,7 @@ function handleClick(event) {
       return;
     case "clear-deposit-form":
       state.ui.editing.depositId = "";
-      state.ui.depositDraft = { memberId: "", dueId: state.ui.selectedDueId || "", status: "자동" };
+      state.ui.depositDraft = createDepositDraft({ dueId: state.ui.selectedDueId || "" });
       renderApp();
       return;
     case "delete-deposit":
@@ -3433,6 +3461,43 @@ function handleChange(event) {
       void importBackupFile(file, target);
     }
     return;
+  }
+
+  if (target.form?.id === "deposit-form" && !state.ui.editing.depositId) {
+    if (target.name === "memberId") {
+      const nextMemberId = target.value || "";
+      const currentDue = getDue(state.ui.depositDraft.dueId);
+      const nextDueId =
+        currentDue && (!nextMemberId || currentDue.targetMemberIds.includes(nextMemberId))
+          ? currentDue.id
+          : getDepositDueOptions(nextMemberId)[0]?.id || "";
+      state.ui.depositDraft = createDepositDraft({
+        memberId: nextMemberId,
+        dueId: nextDueId,
+        status: state.ui.depositDraft.status,
+      });
+      renderApp();
+      return;
+    }
+
+    if (target.name === "dueId") {
+      state.ui.depositDraft = createDepositDraft({
+        memberId: state.ui.depositDraft.memberId,
+        dueId: target.value || "",
+        status: state.ui.depositDraft.status,
+      });
+      renderApp();
+      return;
+    }
+
+    if (target.name === "statusChoice") {
+      state.ui.depositDraft = createDepositDraft({
+        memberId: state.ui.depositDraft.memberId,
+        dueId: state.ui.depositDraft.dueId,
+        status: target.value || "납부 완료",
+      });
+      return;
+    }
   }
 
   if (target.dataset.filterKey) {
@@ -3639,10 +3704,19 @@ function submitDeposit(form) {
     payerName: String(formData.get("payerName") || "").trim(),
     memo: String(formData.get("memo") || "").trim(),
   };
-  const statusChoice = String(formData.get("statusChoice") || "자동");
+  let statusChoice = String(formData.get("statusChoice") || "납부 완료");
+
+  if (!record.payerName && record.memberId) {
+    const member = getMember(record.memberId);
+    record.payerName = member?.payerName || member?.name || "";
+  }
 
   if (!record.date || record.amount <= 0) {
     return flash("입금일과 금액은 필수입니다.", "danger");
+  }
+
+  if ((!record.memberId || !record.dueId) && statusChoice !== "확인 필요") {
+    statusChoice = "확인 필요";
   }
 
   const duplicate = getDeposits().find(
@@ -3688,12 +3762,16 @@ function submitDeposit(form) {
 
   if (record.memberId && record.dueId) {
     const assignment = findOrCreateAssignment(record.dueId, record.memberId);
-    assignment.manualStatus = statusChoice === "자동" ? "자동" : status;
+    assignment.manualStatus = status;
   }
 
   recalculateAllAssignments(state);
+  state.ui.selectedPeriod = period;
+  if (record.dueId) {
+    state.ui.selectedDueId = record.dueId;
+  }
   state.ui.editing.depositId = "";
-  state.ui.depositDraft = { memberId: "", dueId: state.ui.selectedDueId || "", status: "자동" };
+  state.ui.depositDraft = createDepositDraft({ dueId: record.dueId || state.ui.selectedDueId || "" });
   persist(editingId ? "입금 정보를 수정했습니다." : "입금을 등록했습니다.");
   form.reset();
 }
@@ -4253,11 +4331,11 @@ function editDeposit(id) {
   }
   state.ui.currentTab = "deposits";
   state.ui.editing.depositId = id;
-  state.ui.depositDraft = {
+  state.ui.depositDraft = createDepositDraft({
     memberId: deposit.memberId,
     dueId: deposit.dueId,
     status: deposit.status,
-  };
+  });
   renderApp();
 }
 
@@ -4706,11 +4784,11 @@ function suggestStatus(paidAmount, dueAmount) {
 }
 
 function resolveDepositStatus(record, chosenStatus) {
-  if (!record.memberId || !record.dueId) {
-    return "확인 필요";
-  }
   if (chosenStatus && chosenStatus !== "자동") {
     return chosenStatus;
+  }
+  if (!record.memberId || !record.dueId) {
+    return "확인 필요";
   }
   const due = getDue(record.dueId);
   if (!due) {
@@ -4796,6 +4874,27 @@ function isPeriodClosed(period) {
 
 function getDuesForPeriod(period) {
   return getDues().filter((due) => due.period === period);
+}
+
+function getDepositDueOptions(memberId = "") {
+  const dues = getDues()
+    .filter((due) => !memberId || due.targetMemberIds.includes(memberId))
+    .slice()
+    .sort((left, right) => {
+      const rightKey = `${right.period}${right.dueDate || ""}${right.createdAt || ""}`;
+      const leftKey = `${left.period}${left.dueDate || ""}${left.createdAt || ""}`;
+      return rightKey.localeCompare(leftKey);
+    });
+
+  return dues.length
+    ? dues
+    : getDues()
+        .slice()
+        .sort((left, right) => {
+          const rightKey = `${right.period}${right.dueDate || ""}${right.createdAt || ""}`;
+          const leftKey = `${left.period}${left.dueDate || ""}${left.createdAt || ""}`;
+          return rightKey.localeCompare(leftKey);
+        });
 }
 
 function getAssignmentsForPeriod(period) {
@@ -5221,11 +5320,7 @@ function clearEditingState() {
     depositId: "",
     expenseId: "",
   };
-  state.ui.depositDraft = {
-    memberId: "",
-    dueId: "",
-    status: "자동",
-  };
+  state.ui.depositDraft = createDepositDraft();
   state.ui.selectedTempMeetingId = "";
 }
 

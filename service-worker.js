@@ -1,4 +1,4 @@
-const CACHE_NAME = "moim-treasurer-shell-v2";
+const CACHE_NAME = "moim-treasurer-shell-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
