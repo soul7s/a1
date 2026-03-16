@@ -1,4 +1,9 @@
 const STORAGE_KEY = "moim-treasurer-board-v1";
+const STORAGE_META_KEY = "moim-treasurer-board-v1-meta";
+const LOCAL_DB_NAME = "moim-treasurer-board-db";
+const LOCAL_DB_VERSION = 1;
+const LOCAL_STORE_NAME = "snapshots";
+const LOCAL_RECORD_KEY = "app-state";
 const SHARED_STATE_KEYS = [
   "groups",
   "settings",
@@ -60,6 +65,12 @@ const syncState = {
   status: "local",
   revision: 0,
   lastSyncedAt: "",
+  lastLocalSavedAt: "",
+  localStorageLabel: "브라우저 저장",
+  localDbReady: false,
+  localSaveError: false,
+  localSaveTimer: null,
+  localDb: null,
   saveTimer: null,
   isPulling: false,
   isPushing: false,
@@ -76,7 +87,12 @@ function initialize() {
   hydrateState();
   bindEvents();
   renderApp();
-  void initializeRemoteSync();
+  void initializeBackgroundServices();
+}
+
+async function initializeBackgroundServices() {
+  await initializeLocalPersistence();
+  await initializeRemoteSync();
 }
 
 function bindEvents() {
@@ -87,6 +103,11 @@ function bindEvents() {
 
 function loadState() {
   try {
+    const rawMeta = window.localStorage.getItem(STORAGE_META_KEY);
+    if (rawMeta) {
+      const meta = JSON.parse(rawMeta);
+      syncState.lastLocalSavedAt = meta.savedAt || "";
+    }
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       return createSeedState();
@@ -97,16 +118,197 @@ function loadState() {
   }
 }
 
-function saveState(options = {}) {
+function writeBrowserSnapshot(snapshotState, savedAt) {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshotState));
+    window.localStorage.setItem(
+      STORAGE_META_KEY,
+      JSON.stringify({
+        savedAt,
+      }),
+    );
+    syncState.lastLocalSavedAt = savedAt;
+    syncState.localSaveError = false;
+    return true;
   } catch (error) {
+    syncState.localSaveError = true;
     console.error("Failed to save state", error);
+    return false;
+  }
+}
+
+function saveState(options = {}) {
+  const savedAt = isoNow();
+  writeBrowserSnapshot(state, savedAt);
+
+  if (!options.skipLocalDb) {
+    queueLocalDatabaseSave(savedAt);
   }
 
   if (!options.skipRemote) {
     queueRemoteSave();
   }
+
+  renderSyncIndicator();
+}
+
+async function initializeLocalPersistence() {
+  if (typeof window.indexedDB === "undefined") {
+    syncState.localDbReady = false;
+    syncState.localStorageLabel = "브라우저 저장";
+    renderSyncIndicator();
+    return;
+  }
+
+  try {
+    syncState.localDb = await openLocalDatabase();
+    syncState.localDbReady = true;
+    syncState.localStorageLabel = "IndexedDB + 브라우저 저장";
+
+    const snapshot = await readLocalSnapshot();
+    if (isValidLocalSnapshot(snapshot)) {
+      const shouldRestore =
+        !syncState.lastLocalSavedAt || isSavedAtNewer(snapshot.savedAt, syncState.lastLocalSavedAt);
+      if (shouldRestore) {
+        applyLocalSnapshot(snapshot.state, snapshot.savedAt);
+        return;
+      }
+    }
+
+    queueLocalDatabaseSave(syncState.lastLocalSavedAt || isoNow());
+  } catch (error) {
+    syncState.localDbReady = false;
+    syncState.localDb = null;
+    syncState.localStorageLabel = "브라우저 저장";
+    console.error("Failed to initialize local persistence", error);
+  } finally {
+    renderSyncIndicator();
+  }
+}
+
+function openLocalDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(LOCAL_DB_NAME, LOCAL_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(LOCAL_STORE_NAME)) {
+        database.createObjectStore(LOCAL_STORE_NAME, { keyPath: "key" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB open failed"));
+  });
+}
+
+function readLocalSnapshot() {
+  return new Promise((resolve, reject) => {
+    if (!syncState.localDb) {
+      resolve(null);
+      return;
+    }
+
+    const transaction = syncState.localDb.transaction(LOCAL_STORE_NAME, "readonly");
+    const store = transaction.objectStore(LOCAL_STORE_NAME);
+    const request = store.get(LOCAL_RECORD_KEY);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error || new Error("IndexedDB read failed"));
+  });
+}
+
+function writeLocalSnapshot(snapshot) {
+  return new Promise((resolve, reject) => {
+    if (!syncState.localDb) {
+      resolve(false);
+      return;
+    }
+
+    const transaction = syncState.localDb.transaction(LOCAL_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(LOCAL_STORE_NAME);
+    const request = store.put({
+      key: LOCAL_RECORD_KEY,
+      savedAt: snapshot.savedAt,
+      state: cloneJson(snapshot.state),
+    });
+
+    request.onsuccess = () => resolve(true);
+    request.onerror = () => reject(request.error || new Error("IndexedDB write failed"));
+  });
+}
+
+function queueLocalDatabaseSave(savedAt = "") {
+  if (!syncState.localDbReady || !syncState.localDb) {
+    return;
+  }
+
+  window.clearTimeout(syncState.localSaveTimer);
+  syncState.localSaveTimer = window.setTimeout(() => {
+    void persistLocalSnapshot(savedAt || syncState.lastLocalSavedAt || isoNow());
+  }, 220);
+}
+
+async function persistLocalSnapshot(savedAt) {
+  if (!syncState.localDbReady || !syncState.localDb) {
+    return;
+  }
+
+  try {
+    await writeLocalSnapshot({
+      savedAt,
+      state,
+    });
+    syncState.lastLocalSavedAt = savedAt;
+    syncState.localSaveError = false;
+  } catch (error) {
+    syncState.localSaveError = true;
+    console.error("Failed to persist local snapshot", error);
+  } finally {
+    renderSyncIndicator();
+  }
+}
+
+function applyLocalSnapshot(snapshotState, savedAt) {
+  if (!isValidStateSnapshot(snapshotState)) {
+    return;
+  }
+
+  Object.keys(state).forEach((key) => delete state[key]);
+  Object.assign(state, cloneJson(snapshotState));
+  hydrateState();
+  writeBrowserSnapshot(state, savedAt || isoNow());
+  renderApp();
+}
+
+function isValidLocalSnapshot(snapshot) {
+  return (
+    snapshot &&
+    typeof snapshot === "object" &&
+    snapshot.key === LOCAL_RECORD_KEY &&
+    isValidStateSnapshot(snapshot.state)
+  );
+}
+
+function isValidStateSnapshot(snapshotState) {
+  return Boolean(
+    snapshotState &&
+      typeof snapshotState === "object" &&
+      Array.isArray(snapshotState.groups) &&
+      snapshotState.ui &&
+      typeof snapshotState.ui === "object",
+  );
+}
+
+function isSavedAtNewer(candidate, current) {
+  const candidateTime = Date.parse(candidate || "");
+  const currentTime = Date.parse(current || "");
+  if (!Number.isFinite(candidateTime)) {
+    return false;
+  }
+  if (!Number.isFinite(currentTime)) {
+    return true;
+  }
+  return candidateTime > currentTime;
 }
 
 function createDepositDraft(overrides = {}) {
@@ -383,6 +585,16 @@ function renderSyncIndicator() {
 
 function getSyncIndicatorMeta() {
   const syncedAt = formatSyncTime(syncState.lastSyncedAt);
+  const localSavedAt = formatSyncTime(syncState.lastLocalSavedAt);
+
+  if (!syncState.available && syncState.localSaveError) {
+    return {
+      className: "is-danger",
+      text: "기기 저장 확인 필요",
+      title: "이 기기 저장 중 일부 문제가 있었습니다. 브라우저를 새로고침한 뒤 다시 확인하세요.",
+    };
+  }
+
   switch (syncState.status) {
     case "connecting":
       return {
@@ -417,8 +629,10 @@ function getSyncIndicatorMeta() {
     default:
       return {
         className: "is-local",
-        text: "이 기기 저장",
-        title: "현재는 서버가 없어 이 기기에서만 데이터가 유지됩니다.",
+        text: localSavedAt ? `이 기기 자동 저장 · ${localSavedAt}` : "이 기기 자동 저장",
+        title: syncState.localDbReady
+          ? "현재는 서버 없이 이 기기 안에 자동 저장됩니다. IndexedDB와 브라우저 저장을 함께 사용합니다."
+          : "현재는 서버 없이 이 기기 브라우저 저장소에 저장됩니다.",
       };
   }
 }
@@ -2573,12 +2787,12 @@ function renderSettings() {
           <div class="section-title">
             <div>
               <h3>저장 · 전달 방식</h3>
-              <p>${syncState.available ? "현재는 서버 저장과 기기 자동 반영을 같이 지원합니다." : "지금은 이 기기 안에 저장됩니다. 백업 파일을 내보내 다른 기기로 전달할 수 있습니다."}</p>
+              <p>${syncState.available ? "현재는 서버 저장과 기기 자동 반영을 같이 지원합니다." : "지금은 이 기기 안에 자동 저장됩니다. 다른 기기로 옮길 때만 백업 파일을 내보내면 됩니다."}</p>
             </div>
           </div>
           <div class="kpi-list">
             ${renderKpiRow("현재 상태", escapeHtml(syncMeta.text))}
-            ${renderKpiRow("저장 위치", syncState.available ? "서버 저장 + 이 기기 백업" : "이 기기 브라우저 저장")}
+            ${renderKpiRow("저장 위치", syncState.available ? "서버 저장 + 이 기기 백업" : `이 기기 ${escapeHtml(syncState.localStorageLabel)}`)}
             ${renderKpiRow("현재 주소", escapeHtml(window.location.origin))}
           </div>
         </article>
@@ -3715,10 +3929,6 @@ function submitDeposit(form) {
     return flash("입금일과 금액은 필수입니다.", "danger");
   }
 
-  if ((!record.memberId || !record.dueId) && statusChoice !== "확인 필요") {
-    statusChoice = "확인 필요";
-  }
-
   const duplicate = getDeposits().find(
     (deposit) =>
       !deposit.deletedAt &&
@@ -3762,7 +3972,8 @@ function submitDeposit(form) {
 
   if (record.memberId && record.dueId) {
     const assignment = findOrCreateAssignment(record.dueId, record.memberId);
-    assignment.manualStatus = status;
+    assignment.manualStatus =
+      statusChoice === "확인 필요" ? "확인 필요" : statusChoice === "부분 납부" ? "부분 납부" : "자동";
   }
 
   recalculateAllAssignments(state);
@@ -4784,17 +4995,13 @@ function suggestStatus(paidAmount, dueAmount) {
 }
 
 function resolveDepositStatus(record, chosenStatus) {
-  if (chosenStatus && chosenStatus !== "자동") {
-    return chosenStatus;
+  if (chosenStatus === "부분 납부") {
+    return "부분 납부";
   }
-  if (!record.memberId || !record.dueId) {
+  if (chosenStatus === "확인 필요") {
     return "확인 필요";
   }
-  const due = getDue(record.dueId);
-  if (!due) {
-    return "확인 필요";
-  }
-  return suggestStatus(record.amount, due.amount);
+  return "납부 완료";
 }
 
 function getDueCounts(dueId) {
