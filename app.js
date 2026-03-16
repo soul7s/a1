@@ -1048,6 +1048,7 @@ function hydrateState() {
   };
   state.ui.flash = state.ui.flash || null;
 
+  autolinkDepositsToDues(state);
   recalculateAllAssignments(state);
   syncSelectedDue();
   syncSelectedTempMeeting();
@@ -3993,6 +3994,19 @@ function submitDeposit(form) {
     return flash("입금일과 금액은 필수입니다.", "danger");
   }
 
+  if (!record.dueId && record.memberId) {
+    const matchedDue = getMatchingDueForDeposit(state, {
+      groupId: getCurrentGroupId(),
+      memberId: record.memberId,
+      dueId: "",
+      date: record.date,
+      amount: record.amount,
+    });
+    if (matchedDue) {
+      record.dueId = matchedDue.id;
+    }
+  }
+
   const duplicate = getDeposits().find(
     (deposit) =>
       !deposit.deletedAt &&
@@ -5441,7 +5455,9 @@ function getFallbackRegularMonthlyFee(dues) {
 function getAnnualMembershipCell(member, period) {
   const joinPeriod = periodOf(member.joinDate);
   const regularMonthlyFee = asNumber(getCurrentGroup()?.regularMonthlyFee);
-  const obligationCutoff = state.ui.selectedPeriod < currentPeriod() ? state.ui.selectedPeriod : currentPeriod();
+  const referencePeriod = state.ui.currentTab === "dues" ? getDueReferencePeriod() : state.ui.selectedPeriod;
+  const obligationCutoff = referencePeriod < currentPeriod() ? referencePeriod : currentPeriod();
+  const looseDeposits = getLooseMonthlyDeposits(member.id, period);
   if (joinPeriod && period < joinPeriod) {
     return {
       code: "before-join",
@@ -5455,6 +5471,9 @@ function getAnnualMembershipCell(member, period) {
 
   const dues = getDuesForPeriod(period).filter((due) => due.type === "월회비");
   if (!dues.length) {
+    if (regularMonthlyFee > 0 && looseDeposits.length) {
+      return buildLooseDepositMembershipCell(period, regularMonthlyFee, looseDeposits);
+    }
     const isFuture = period > obligationCutoff;
     if (regularMonthlyFee > 0 && !isFuture) {
       return {
@@ -5480,6 +5499,9 @@ function getAnnualMembershipCell(member, period) {
 
   const memberDues = dues.filter((due) => due.targetMemberIds.includes(member.id));
   if (!memberDues.length) {
+    if (regularMonthlyFee > 0 && looseDeposits.length) {
+      return buildLooseDepositMembershipCell(period, regularMonthlyFee, looseDeposits);
+    }
     return {
       code: "not-target",
       label: "대상 아님",
@@ -5545,6 +5567,65 @@ function getAnnualMembershipCell(member, period) {
       dueAmount,
       paidAmount,
       title: `${monthLabel(period)} 월회비 ${formatCurrency(dueAmount)} 중 ${formatCurrency(paidAmount)} 납부`,
+    };
+  }
+
+  return {
+    code: "unpaid",
+    label: "미납",
+    detail: formatCurrency(dueAmount),
+    dueAmount,
+    paidAmount: 0,
+    title: `${monthLabel(period)} 월회비 ${formatCurrency(dueAmount)} 미납 상태입니다.`,
+  };
+}
+
+function getLooseMonthlyDeposits(memberId, period) {
+  return getDepositsForPeriod(period).filter(
+    (deposit) => deposit.memberId === memberId && !deposit.dueId,
+  );
+}
+
+function buildLooseDepositMembershipCell(period, dueAmount, deposits) {
+  const status = inferAssignmentStatusFromDeposits(deposits, dueAmount);
+  const paidAmount = deposits.reduce((sum, deposit) => sum + asNumber(deposit.amount), 0);
+  const latestPaidAt =
+    deposits
+      .map((deposit) => deposit.date)
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right))
+      .pop() || "";
+
+  if (status === "확인 필요") {
+    return {
+      code: "review",
+      label: "검토",
+      detail: paidAmount ? formatCurrency(paidAmount) : "대조 필요",
+      dueAmount,
+      paidAmount,
+      title: `${monthLabel(period)} 입금이 회비 미지정 상태여서 총무 확인이 필요합니다.`,
+    };
+  }
+
+  if (status === "납부 완료") {
+    return {
+      code: "paid",
+      label: "완납",
+      detail: latestPaidAt ? formatMonthDay(latestPaidAt) : formatCurrency(paidAmount),
+      dueAmount,
+      paidAmount,
+      title: `${monthLabel(period)} 회비 입금이 확인되었습니다.`,
+    };
+  }
+
+  if (status === "부분 납부") {
+    return {
+      code: "partial",
+      label: "부분",
+      detail: `${formatCurrency(paidAmount)}/${formatCurrency(dueAmount)}`,
+      dueAmount,
+      paidAmount,
+      title: `${monthLabel(period)} 회비 일부가 입금되었습니다.`,
     };
   }
 
@@ -5638,6 +5719,77 @@ function findOrCreateAssignment(dueId, memberId) {
     state.assignments.push(assignment);
   }
   return assignment;
+}
+
+function findOrCreateAssignmentInState(targetState, dueId, memberId, groupId) {
+  let assignment = targetState.assignments.find(
+    (item) => item.dueId === dueId && item.memberId === memberId && item.groupId === groupId,
+  );
+  if (!assignment) {
+    assignment = createAssignment(groupId, dueId, memberId);
+    targetState.assignments.push(assignment);
+  }
+  return assignment;
+}
+
+function autolinkDepositsToDues(targetState) {
+  targetState.deposits.forEach((deposit) => {
+    if (deposit.deletedAt || deposit.dueId || !deposit.memberId || !deposit.date) {
+      return;
+    }
+
+    const matchedDue = getMatchingDueForDeposit(targetState, deposit);
+    if (!matchedDue) {
+      return;
+    }
+
+    deposit.dueId = matchedDue.id;
+    findOrCreateAssignmentInState(targetState, matchedDue.id, deposit.memberId, deposit.groupId);
+  });
+}
+
+function getMatchingDueForDeposit(targetState, deposit) {
+  if (!deposit?.memberId || !deposit?.date) {
+    return null;
+  }
+
+  const period = periodOf(deposit.date);
+  const candidates = targetState.dues.filter(
+    (due) =>
+      due.groupId === deposit.groupId &&
+      due.period === period &&
+      Array.isArray(due.targetMemberIds) &&
+      due.targetMemberIds.includes(deposit.memberId),
+  );
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const monthlyExact = candidates.filter(
+    (due) => due.type === "월회비" && asNumber(due.amount) === asNumber(deposit.amount),
+  );
+  if (monthlyExact.length === 1) {
+    return monthlyExact[0];
+  }
+
+  const exact = candidates.filter((due) => asNumber(due.amount) === asNumber(deposit.amount));
+  if (exact.length === 1) {
+    return exact[0];
+  }
+
+  const monthlyCandidates = candidates.filter(
+    (due) => due.type === "월회비" && asNumber(deposit.amount) > 0 && asNumber(deposit.amount) <= asNumber(due.amount),
+  );
+  if (monthlyCandidates.length === 1) {
+    return monthlyCandidates[0];
+  }
+
+  if (candidates.length === 1 && asNumber(deposit.amount) > 0 && asNumber(deposit.amount) <= asNumber(candidates[0].amount)) {
+    return candidates[0];
+  }
+
+  return null;
 }
 
 function getCurrentGroupId() {
